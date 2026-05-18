@@ -1,0 +1,30 @@
+{% comment %}
+  API Endpoint to fetch featured products.
+  Usage: /collections/[handle]/featured_product?section_id=featured-products-api
+{% endcomment %}
+{% layout none %}
+{% paginate collection.products by 50 %}
+  {% for product in collection.products %}
+    <li class="grid__item api-featured-item" data-product-id="{{ product.id }}">
+      {% render 'card-product',
+        card_product: product,
+        media_aspect_ratio: 'adapt',
+        image_shape: 'default',
+        show_secondary_image: true,
+        show_vendor: false,
+        show_rating: false,
+        lazy_load: false,
+        skip_styles: true,
+        quick_add: 'none',
+        section_id: section.id
+      %}
+    </li>
+  {% endfor %}
+{% endpaginate %}
+
+{% schema %}
+{
+  "name": "Featured Products API",
+  "settings": []
+}
+{% endschema %}
