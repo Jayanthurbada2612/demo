@@ -35,10 +35,46 @@
       padding-bottom: {{ section.settings.padding_bottom }}px;
     }
   }
+
+  /*
+    Hides the grid while JS reorders featured products to prevent a visible
+    layout shift. JS removes this class once the final order is ready to paint.
+    min-height prevents the page from collapsing during the async fetch, which
+    would cause the IntersectionObserver sentinel to immediately trigger a
+    second page load.
+  */
+  #product-grid.crg-featured-loading {
+    visibility: hidden;
+    min-height: 600px;
+  }
 {%- endstyle -%}
+
+{%- comment -%}
+  Detect "default view": no active sort_by param and no active filter values.
+  Featured-product pinning is ONLY applied in the default view.
+  Any sort or filter puts us into a standard Shopify rendering path.
+{%- endcomment -%}
+{%- assign is_default_view = true -%}
+{%- if collection.sort_by != blank -%}
+  {%- assign is_default_view = false -%}
+{%- endif -%}
+{%- if is_default_view -%}
+  {%- for filter in collection.filters -%}
+    {%- comment -%}
+      filter.active_values covers list/boolean filters.
+      filter.min_value / filter.max_value covers price-range filters.
+    {%- endcomment -%}
+    {%- if filter.active_values.size > 0
+        or filter.min_value.value != blank
+        or filter.max_value.value != blank -%}
+      {%- assign is_default_view = false -%}
+    {%- endif -%}
+  {%- endfor -%}
+{%- endif -%}
 
 <div class="section-{{ section.id }}-padding gradient color-{{ section.settings.color_scheme }}">
   {%- paginate collection.products by section.settings.products_per_page -%}
+
     {% comment %} Sort is the first tabbable element when filter type is vertical {% endcomment %}
     {%- if section.settings.enable_sorting and section.settings.filter_type == 'vertical' -%}
       <facet-filters-form class="facets facets-vertical-sort page-width small-hide">
@@ -148,46 +184,154 @@
               id="product-grid"
               data-id="{{ section.id }}"
               data-collection-url="{{ collection.url }}"
+              data-is-default-view="{{ is_default_view }}"
+              data-featured-tag="feature_product"
               class="
                 grid product-grid grid--{{ section.settings.columns_mobile }}-col-tablet-down
                 grid--{{ section.settings.columns_desktop }}-col-desktop
                 {% if section.settings.quick_add == 'bulk' %} collection-quick-add-bulk{% endif %}
               "
             >
-              {% assign skip_card_product_styles = false %}
-              {%- for product in collection.products -%}
-                {% assign lazy_load = false %}
-                {%- if forloop.index > 2 -%}
-                  {%- assign lazy_load = true -%}
-                {%- endif -%}
-                <li
-                  class="grid__item{% if settings.animations_reveal_on_scroll %} scroll-trigger animate--slide-in{% endif %}"
-                  data-product-id="{{ product.id }}"
-                  {% if settings.animations_reveal_on_scroll %}
-                    data-cascade
-                    style="--animation-order: {{ forloop.index }};"
-                  {% endif %}
-                >
-                  {% render 'card-product',
-                    card_product: product,
-                    media_aspect_ratio: section.settings.image_ratio,
-                    image_shape: section.settings.image_shape,
-                    show_secondary_image: section.settings.show_secondary_image,
-                    show_vendor: section.settings.show_vendor,
-                    show_rating: section.settings.show_rating,
-                    lazy_load: lazy_load,
-                    skip_styles: skip_card_product_styles,
-                    quick_add: section.settings.quick_add,
-                    section_id: section.id
-                  %}
-                </li>
-                {%- assign skip_card_product_styles = true -%}
-              {%- endfor -%}
+              {%- assign skip_card_product_styles = false -%}
+
+              {%- if is_default_view -%}
+                {%- comment -%}
+                  DEFAULT VIEW — two-pass render.
+
+                  Pass 1: featured products only.
+                  Reason: Shopify's paginator delivers products in sort order, so featured
+                  products can appear on any pagination page. For the *first Shopify page*,
+                  we render whichever products happen to carry the tag first so that:
+                    a) Search engines see them at the top of the DOM (SEO benefit).
+                    b) These DOM nodes already have quick-add/product-form custom elements
+                       initialized, so JS can reuse them without re-hydrating.
+                  JavaScript will then fetch ANY remaining featured products that live on
+                  Shopify pages 2+ via the tagged collection URL and inject them.
+
+                  data-is-featured is read by JS to split the initial DOM into two buckets
+                  without needing a second network request.
+                {%- endcomment -%}
+                {%- for product in collection.products -%}
+                  {%- if product.tags contains 'feature_product' -%}
+                    <li
+                      class="grid__item{% if settings.animations_reveal_on_scroll %} scroll-trigger animate--slide-in{% endif %}"
+                      data-product-id="{{ product.id }}"
+                      data-is-featured="true"
+                      {% if settings.animations_reveal_on_scroll %}
+                        data-cascade
+                        style="--animation-order: {{ forloop.index }};"
+                      {% endif %}
+                    >
+                      {%- render 'card-product',
+                        card_product: product,
+                        media_aspect_ratio: section.settings.image_ratio,
+                        image_shape: section.settings.image_shape,
+                        show_secondary_image: section.settings.show_secondary_image,
+                        show_vendor: section.settings.show_vendor,
+                        show_rating: section.settings.show_rating,
+                        lazy_load: false,
+                        skip_styles: skip_card_product_styles,
+                        quick_add: section.settings.quick_add,
+                        section_id: section.id
+                      -%}
+                    </li>
+                    {%- assign skip_card_product_styles = true -%}
+                  {%- endif -%}
+                {%- endfor -%}
+
+                {%- comment -%}
+                  Pass 2: non-featured products.
+                  These fill the remaining visible slots after featured products.
+                  JS will show only as many as needed to reach the total of 20.
+                  The rest are buffered for infinite scroll.
+                {%- endcomment -%}
+                {%- for product in collection.products -%}
+                  {%- unless product.tags contains 'feature_product' -%}
+                    <li
+                      class="grid__item{% if settings.animations_reveal_on_scroll %} scroll-trigger animate--slide-in{% endif %}"
+                      data-product-id="{{ product.id }}"
+                      data-is-featured="false"
+                      {% if settings.animations_reveal_on_scroll %}
+                        data-cascade
+                        style="--animation-order: {{ forloop.index }};"
+                      {% endif %}
+                    >
+                      {%- render 'card-product',
+                        card_product: product,
+                        media_aspect_ratio: section.settings.image_ratio,
+                        image_shape: section.settings.image_shape,
+                        show_secondary_image: section.settings.show_secondary_image,
+                        show_vendor: section.settings.show_vendor,
+                        show_rating: section.settings.show_rating,
+                        lazy_load: true,
+                        skip_styles: skip_card_product_styles,
+                        quick_add: section.settings.quick_add,
+                        section_id: section.id
+                      -%}
+                    </li>
+                    {%- assign skip_card_product_styles = true -%}
+                  {%- endunless -%}
+                {%- endfor -%}
+
+              {%- else -%}
+                {%- comment -%}
+                  FILTERED / SORTED VIEW — single-pass, standard Shopify order.
+                  Featured pinning is completely disabled. JS uses normal infinite scroll.
+                {%- endcomment -%}
+                {%- for product in collection.products -%}
+                  {%- assign lazy_load = false -%}
+                  {%- if forloop.index > 2 -%}
+                    {%- assign lazy_load = true -%}
+                  {%- endif -%}
+                  <li
+                    class="grid__item{% if settings.animations_reveal_on_scroll %} scroll-trigger animate--slide-in{% endif %}"
+                    data-product-id="{{ product.id }}"
+                    {% if settings.animations_reveal_on_scroll %}
+                      data-cascade
+                      style="--animation-order: {{ forloop.index }};"
+                    {% endif %}
+                  >
+                    {%- render 'card-product',
+                      card_product: product,
+                      media_aspect_ratio: section.settings.image_ratio,
+                      image_shape: section.settings.image_shape,
+                      show_secondary_image: section.settings.show_secondary_image,
+                      show_vendor: section.settings.show_vendor,
+                      show_rating: section.settings.show_rating,
+                      lazy_load: lazy_load,
+                      skip_styles: skip_card_product_styles,
+                      quick_add: section.settings.quick_add,
+                      section_id: section.id
+                    -%}
+                  </li>
+                  {%- assign skip_card_product_styles = true -%}
+                {%- endfor -%}
+              {%- endif -%}
+
             </ul>
 
             {%- if paginate.pages > 1 -%}
-              <div id="infinite-scroll-sentinel" class="loading-overlay__spinner" data-next-url="{{ paginate.next.url }}" style="width: 100%; display: flex; justify-content: center; padding: 2rem 0;">
-                <svg aria-hidden="true" focusable="false" role="presentation" class="spinner" viewBox="0 0 66 66" xmlns="http://www.w3.org/2000/svg">
+              {%- comment -%}
+                The sentinel is the IntersectionObserver target.
+                data-next-url is the only pagination state JS needs; the fallback
+                pagination links are shown if JS fails to load at all.
+              {%- endcomment -%}
+              <div
+                id="infinite-scroll-sentinel"
+                class="loading-overlay__spinner"
+                data-next-url="{{ paginate.next.url }}"
+                style="width: 100%; display: flex; justify-content: center; padding: 2rem 0;"
+              >
+                <svg
+                  aria-hidden="true"
+                  focusable="false"
+                  role="presentation"
+                  class="spinner"
+                  width="36"
+                  height="36"
+                  viewBox="0 0 66 66"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
                   <circle class="path" fill="none" stroke-width="6" cx="33" cy="33" r="30"></circle>
                 </svg>
               </div>
@@ -200,6 +344,7 @@
       </div>
     </div>
   {%- endpaginate -%}
+
   {% if section.settings.image_shape == 'arch' %}
     {{ 'mask-arch.svg' | inline_asset_content }}
   {%- endif -%}
@@ -243,7 +388,7 @@
           "label": "t:sections.main-collection-product-grid.settings.columns_mobile.options__2.label"
         }
       ]
-    },    
+    },
     {
       "type": "color_scheme",
       "id": "color_scheme",
