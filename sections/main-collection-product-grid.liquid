@@ -47,28 +47,62 @@
     visibility: hidden;
     min-height: 600px;
   }
+
+  .grid__item {
+    position: relative;
+  }
+
+  .featured-product-badge {
+    position: absolute;
+    top: 1rem;
+    left: 1rem;
+    z-index: 2;
+    background-color: #000;
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 0.3rem 0.65rem;
+    border-radius: 2px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    pointer-events: none;
+  }
 {%- endstyle -%}
+{%- comment -%}
+  Detect views where featured-product pinning should stay enabled.
+
+  ENABLED:
+  - Default collection page
+  - Shopify "Featured" sorting (sort_by=manual)
+
+  DISABLED:
+  - Any other sorting
+  - Any active filters
+{%- endcomment -%}
+
+{%- assign is_default_view = true -%}
 
 {%- comment -%}
-  Detect "default view": no active sort_by param and no active filter values.
-  Featured-product pinning is ONLY applied in the default view.
-  Any sort or filter puts us into a standard Shopify rendering path.
+  Shopify uses:
+  sort_by=manual
+  for "Featured" sorting.
 {%- endcomment -%}
-{%- assign is_default_view = true -%}
-{%- if collection.sort_by != blank -%}
+
+{%- if collection.sort_by != blank and collection.sort_by != 'manual' -%}
   {%- assign is_default_view = false -%}
 {%- endif -%}
+
 {%- if is_default_view -%}
   {%- for filter in collection.filters -%}
-    {%- comment -%}
-      filter.active_values covers list/boolean filters.
-      filter.min_value / filter.max_value covers price-range filters.
-    {%- endcomment -%}
+
     {%- if filter.active_values.size > 0
-        or filter.min_value.value != blank
-        or filter.max_value.value != blank -%}
+      or filter.min_value.value != blank
+      or filter.max_value.value != blank -%}
+
       {%- assign is_default_view = false -%}
+
     {%- endif -%}
+
   {%- endfor -%}
 {%- endif -%}
 
@@ -222,6 +256,7 @@
                         style="--animation-order: {{ forloop.index }};"
                       {% endif %}
                     >
+                      <span class="featured-product-badge">feature_product</span>
                       {%- render 'card-product',
                         card_product: product,
                         media_aspect_ratio: section.settings.image_ratio,
@@ -291,6 +326,9 @@
                       style="--animation-order: {{ forloop.index }};"
                     {% endif %}
                   >
+                    {%- if product.tags contains 'feature_product' -%}
+                      <span class="featured-product-badge">Feature_product</span>
+                    {%- endif -%}
                     {%- render 'card-product',
                       card_product: product,
                       media_aspect_ratio: section.settings.image_ratio,
